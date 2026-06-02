@@ -83,6 +83,7 @@ def find_bs_and_is(pdf_path):
         '营业成本': ['其中：营业成本', '营业成本'],
         '净利润': ['净利润（净亏损', '净利润'],
         '归母净利润': ['归属于母公司所有者的净利润'],
+        '利润总额': ['利润总额（', '利润总额'],
     }
     
     for key, keywords in pl_items.items():
@@ -93,14 +94,58 @@ def find_bs_and_is(pdf_path):
                     if nums:
                         vals = [parse_number(n) for n in nums]
                         vals = [v for v in vals if v is not None]
-                        # 收入/成本的值通常较大(>1千万)，过滤掉附注编号等小数字
                         if key in ('营业收入', '营业成本'):
                             vals = [v for v in vals if abs(v) > 1e7]
                         if vals:
-                            result[key] = vals[0]  # 取第一个符合条件的数字
+                            result[key] = vals[0]
                             break
             if key in result:
                 break
+    
+    # 利息费用需要在"财务费用"行之后限定范围内搜索
+    # 避免匹配到会计政策描述等不相关文本
+    pl_lines = pl_section.split('\n')
+    found_fe = False
+    for i, line in enumerate(pl_lines):
+        if found_fe:
+            # 在财务费用行之后的20行内搜索"其中：利息费用"
+            if i - fe_line_no > 20:
+                break
+            if '其中：利息费用' in line or '其中:利息费用' in line:
+                nums = re.findall(r'[-−]?\s*[\d,]+\.?\d+', line)
+                if nums:
+                    vals = [parse_number(n) for n in nums]
+                    vals = [v for v in vals if v is not None and abs(v) > 100]
+                    if vals:
+                        result['利息费用'] = vals[0]
+                        break
+        if '财务费用' in line and line.strip().startswith('财务费用'):
+            fe_line_no = i
+            found_fe = True
+            # 如果利息费用和财务费用在同一行(合并格式)
+            if '其中：利息费用' in line or '其中:利息费用' in line:
+                nums = re.findall(r'[-−]?\s*[\d,]+\.?\d+', line)
+                if nums:
+                    vals = [parse_number(n) for n in nums]
+                    # 利息费用在财务费用行中的位置(跳过财务费用本身的值)
+                    # 取绝对值最大的那个作为利息费用(利润表格式: 财务费用 附注 金额 金额)
+                    vals = [v for v in vals if v is not None and abs(v) > 100]
+                    if len(vals) >= 2:
+                        result['利息费用'] = vals[1]  # 第二个大数字
+                    elif vals:
+                        result['利息费用'] = vals[0]
+                break
+    if not found_fe:
+        # 财务费用行没找到，回退到全文本搜索
+        for line in pl_lines:
+            if '其中：利息费用' in line:
+                nums = re.findall(r'[-−]?\s*[\d,]+\.?\d+', line)
+                if nums:
+                    vals = [parse_number(n) for n in nums]
+                    vals = [v for v in vals if v is not None and abs(v) > 100]
+                    if vals:
+                        result['利息费用'] = vals[0]
+                        break
     
     return result
 
@@ -209,7 +254,18 @@ for year in years:
         ta_growth = (ta_end - prev_ta) / prev_ta * 100
     else:
         ta_growth = None
-    
+
+    # 利息保障倍数 = (利润总额 + 利息费用) / 利息费用
+    profit_before_tax = d.get('利润总额')
+    interest_expense = d.get('利息费用')
+    if profit_before_tax is not None and interest_expense and interest_expense > 0:
+        interest_coverage = (profit_before_tax + interest_expense) / interest_expense
+    elif profit_before_tax is not None and interest_expense and interest_expense < 0:
+        # 利息费用为负(利息收入大于利息支出)时，使用绝对值
+        interest_coverage = (profit_before_tax + abs(interest_expense)) / abs(interest_expense)
+    else:
+        interest_coverage = None
+
     row = {
         '年份': year,
         '资产总计_期末(元)': ta_end,
@@ -233,6 +289,7 @@ for year in years:
         '总资产收益率(%)': roa,
         '营业收入增长率(%)': rev_growth,
         '总资产增长率(%)': ta_growth,
+        '利息保障倍数': interest_coverage,
     }
     rows.append(row)
     
@@ -246,6 +303,7 @@ for year in years:
     print(f"  总资产收益率={roa:.2f}%" if roa else "  总资产收益率=缺失")
     print(f"  营业收入增长率={rev_growth:.2f}%" if rev_growth else "  营业收入增长率=缺失", end='')
     print(f"  总资产增长率={ta_growth:.2f}%" if ta_growth else "  总资产增长率=缺失")
+    print(f"  利息保障倍数={interest_coverage:.2f}" if interest_coverage else "  利息保障倍数=缺失")
 
 # 保存
 df = pd.DataFrame(rows)
@@ -255,5 +313,6 @@ print("\n\n数据已保存到 年报提取数据.xlsx")
 # 输出摘要表
 print("\n\n=== 指标汇总 ===")
 summary = df[['年份', '流动比率', '速动比率', '资产负债率(%)', '应收账款周转率(次)', 
-              '存货周转率(次)', '毛利率(%)', '总资产收益率(%)', '营业收入增长率(%)', '总资产增长率(%)']]
+              '存货周转率(次)', '毛利率(%)', '总资产收益率(%)', '营业收入增长率(%)', '总资产增长率(%)',
+              '利息保障倍数']]
 print(summary.round(4).to_string())

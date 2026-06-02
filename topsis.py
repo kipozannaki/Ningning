@@ -5,6 +5,7 @@ import numpy as np
 COL_MAP = {
     '流动比率': 'x11',
     '速动比率': 'x13',
+    '利息保障倍数': 'x14',
     '资产负债率(%)': 'x12',
     '应收账款周转率(次)': 'x21',
     '存货周转率(次)': 'x22',
@@ -33,6 +34,7 @@ def read_data(file_path):
     COL_MAP_CLEAN = {
         '流动比率': 'x11',
         '速动比率': 'x13',
+        '利息保障倍数': 'x14',
         '资产负债率(%)': 'x12',
         '应收账款周转率(次)': 'x21',
         '存货周转率(次)': 'x22',
@@ -52,10 +54,10 @@ def read_data(file_path):
 # 2. 指标标准化（正向 / 负向）
 # ======================
 def normalize_data(df):
-    positive = ['x11', 'x13', 'x21', 'x22', 'x31', 'x32', 'x41', 'x42']
+    positive = ['x11', 'x13', 'x14', 'x21', 'x22', 'x31', 'x32', 'x41', 'x42']
     negative = ['x12']
 
-    target_order = ['x11', 'x13', 'x12', 'x21', 'x22', 'x31', 'x32', 'x41', 'x42']
+    target_order = ['x11', 'x13', 'x14', 'x12', 'x21', 'x22', 'x31', 'x32', 'x41', 'x42']
 
     norm_df = pd.DataFrame(index=df.index)
 
@@ -112,7 +114,7 @@ def topsis(norm_df, weights):
 # ======================
 # 维度定义：维度名 -> 包含的指标变量名
 DIMENSIONS = {
-    '偿债能力': ['x11', 'x13', 'x12'],
+    '偿债能力': ['x11', 'x13', 'x14', 'x12'],
     '营运能力': ['x21', 'x22'],
     '盈利能力': ['x31', 'x32'],
     '发展能力': ['x41', 'x42'],
@@ -132,12 +134,13 @@ def calc_dimension_scores(norm_df, weights):
 # ======================
 def main():
     df = read_data('年报提取数据.xlsx')
+    df = df.loc[2019:2025]  # 仅保留2019-2025年数据
     norm_df = normalize_data(df)
     weights = entropy_weight(norm_df)
     topsis_result, weighted_matrix = topsis(norm_df, weights)
     dimension_scores = calc_dimension_scores(norm_df, weights)
 
-    target_order = ['x11', 'x13', 'x12', 'x21', 'x22', 'x31', 'x32', 'x41', 'x42']
+    target_order = ['x11', 'x13', 'x14', 'x12', 'x21', 'x22', 'x31', 'x32', 'x41', 'x42']
 
     print("各指标权重分配：")
     print("=" * 48)
@@ -171,7 +174,7 @@ def main():
     for year, row in topsis_result.iterrows():
         print(f"{year}: 相对贴近度={row['相对贴近度']:.4f}, 排名={int(row['排名'])}")
 
-    with pd.ExcelWriter('熵权法_TOPSIS_结果.xlsx', engine='openpyxl') as writer:
+    with pd.ExcelWriter('熵权法_TOPSIS_结果.xlsx', engine='openpyxl', mode='w') as writer:
         export_df = df.rename(columns=ORIGINAL_NAMES)
         export_df.to_excel(writer, sheet_name='原始数据')
         norm_df_export = norm_df.rename(columns=ORIGINAL_NAMES)
